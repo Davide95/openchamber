@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
 
 const executeCommand = mock(async () => undefined);
+const openExternal = mock(async () => true);
 const updateWorkspaceFolders = mock(async (start, deleteCount, ...foldersToAdd) => {
   for (const folder of foldersToAdd) {
     currentWorkspaceFolders = [...currentWorkspaceFolders, { name: folder.uri.fsPath.split('/').pop(), uri: folder.uri }];
@@ -27,6 +28,7 @@ class Range {
 
 mock.module('vscode', () => ({
   commands: { executeCommand },
+  env: { openExternal },
   workspace: {
     get workspaceFolders() {
       return currentWorkspaceFolders;
@@ -35,6 +37,7 @@ mock.module('vscode', () => ({
   },
   Uri: {
     file: (fsPath) => ({ scheme: 'file', fsPath }),
+    parse: (value, strict) => ({ scheme: value.split(':')[0], raw: value, strict }),
   },
   Position,
   Range,
@@ -372,5 +375,276 @@ describe('VS Code system bridge api:sessions/metadata:set', () => {
     const response = await handleSystemBridgeMessage(message, { manager }, failingWith(new Error('OpenCode is down')));
 
     expect(response).toEqual({ id: 'meta', type: 'api:sessions/metadata:set', success: false, error: 'OpenCode is down' });
+  });
+});
+
+describe('VS Code system bridge vscode:command allowlist', () => {
+  beforeEach(() => {
+    executeCommand.mockClear();
+    executeCommand.mockResolvedValue('ok');
+  });
+
+  test('refuses arbitrary, internal, and panel-only commands without executing them', async () => {
+    for (const command of [
+      'workbench.action.terminal.sendSequence',
+      'vscode.openFolder',
+      'openchamber.settingsReady',
+      'openchamber.updateSessionEditorTitle',
+      'openchamber.internal.showNotification',
+      ' openchamber.showSettings ',
+    ]) {
+      const response = await handleSystemBridgeMessage({
+        id: `deny-${command}`,
+        type: 'vscode:command',
+        payload: { command, args: [{ text: 'id\n' }] },
+      }, undefined, deps);
+
+      expect(response).toEqual({
+        id: `deny-${command}`,
+        type: 'vscode:command',
+        success: false,
+        error: `Command is not allowed: ${command}`,
+      });
+    }
+    expect(executeCommand).not.toHaveBeenCalled();
+  });
+
+  test('refuses missing, blank, or non-string command payloads', async () => {
+    for (const payload of [undefined, null, {}, { command: '' }, { command: '   ' }, { command: 42 }]) {
+      const response = await handleSystemBridgeMessage({
+        id: 'missing-cmd',
+        type: 'vscode:command',
+        payload,
+      }, undefined, deps);
+
+      expect(response).toEqual({
+        id: 'missing-cmd',
+        type: 'vscode:command',
+        success: false,
+        error: 'Command is required',
+      });
+    }
+    expect(executeCommand).not.toHaveBeenCalled();
+  });
+
+  test('refuses malformed arguments for every allowed command', async () => {
+    const malformedCases = [
+      { command: 'openchamber.showSettings', args: [false] },
+      { command: 'openchamber.showSettings', args: [''] },
+      { command: 'openchamber.showSettings', args: [{}] },
+      { command: 'openchamber.showSettings', args: [{ page: 42 }] },
+      { command: 'openchamber.showSettings', args: [{ page: '' }] },
+      { command: 'openchamber.showSettings', args: [{ page: 'appearance' }, 'extra'] },
+      { command: 'openchamber.showSettings', args: 'not-an-array' },
+      { command: 'openchamber.closeSettings', args: ['extra'] },
+      { command: 'openchamber.closeSettings', args: [null] },
+      { command: 'openchamber.closeSettings', args: null },
+      { command: 'openchamber.setActiveSession', args: [123] },
+      { command: 'openchamber.setActiveSession', args: [''] },
+      { command: 'openchamber.setActiveSession', args: ['   '] },
+      { command: 'openchamber.setActiveSession', args: ['ses_1', 42] },
+      { command: 'openchamber.setActiveSession', args: ['ses_1', 'Title', 'extra'] },
+      { command: 'openchamber.openSessionInEditor' },
+      { command: 'openchamber.openSessionInEditor', args: [] },
+      { command: 'openchamber.openSessionInEditor', args: [null] },
+      { command: 'openchamber.openSessionInEditor', args: [''] },
+      { command: 'openchamber.openSessionInEditor', args: [123] },
+      { command: 'openchamber.openSessionInEditor', args: ['ses_1', 42] },
+      { command: 'openchamber.openSessionInEditor', args: ['ses_1', 'Title', 'extra'] },
+    ];
+
+    for (const payload of malformedCases) {
+      const response = await handleSystemBridgeMessage({
+        id: `bad-${payload.command}`,
+        type: 'vscode:command',
+        payload,
+      }, undefined, deps);
+
+      expect(response).toEqual({
+        id: `bad-${payload.command}`,
+        type: 'vscode:command',
+        success: false,
+        error: `Invalid arguments for command: ${payload.command}`,
+      });
+    }
+    expect(executeCommand).not.toHaveBeenCalled();
+  });
+
+  test('executes all 4 allowed commands with validated and sanitized arguments', async () => {
+    const validCases = [
+      {
+        payload: { command: 'openchamber.showSettings' },
+        expectedCall: ['openchamber.showSettings'],
+      },
+      {
+        payload: { command: 'openchamber.showSettings', args: [] },
+        expectedCall: ['openchamber.showSettings'],
+      },
+      {
+        payload: { command: 'openchamber.showSettings', args: [null] },
+        expectedCall: ['openchamber.showSettings'],
+      },
+      {
+        payload: { command: 'openchamber.showSettings', args: [undefined] },
+        expectedCall: ['openchamber.showSettings'],
+      },
+      {
+        payload: {
+          command: 'openchamber.showSettings',
+          args: [{ page: ' mcp ', itemId: 'mcp.create', directory: '/work/repo', connectProvider: false, providerId: null, ignored: 'strip-me' }],
+        },
+        expectedCall: ['openchamber.showSettings', { page: 'mcp', itemId: 'mcp.create', directory: '/work/repo', connectProvider: false, providerId: null }],
+      },
+      {
+        payload: { command: 'openchamber.closeSettings' },
+        expectedCall: ['openchamber.closeSettings'],
+      },
+      {
+        payload: { command: 'openchamber.closeSettings', args: [] },
+        expectedCall: ['openchamber.closeSettings'],
+      },
+      {
+        payload: { command: 'openchamber.setActiveSession', args: [null, null] },
+        expectedCall: ['openchamber.setActiveSession', null, null],
+      },
+      {
+        payload: { command: 'openchamber.setActiveSession', args: [' ses_abc ', 'Session Title'] },
+        expectedCall: ['openchamber.setActiveSession', 'ses_abc', 'Session Title'],
+      },
+      {
+        payload: { command: 'openchamber.setActiveSession', args: ['ses_abc'] },
+        expectedCall: ['openchamber.setActiveSession', 'ses_abc'],
+      },
+      {
+        payload: { command: 'openchamber.setActiveSession', args: [] },
+        expectedCall: ['openchamber.setActiveSession'],
+      },
+      {
+        payload: { command: 'openchamber.openSessionInEditor', args: ['ses_abc'] },
+        expectedCall: ['openchamber.openSessionInEditor', 'ses_abc'],
+      },
+      {
+        payload: { command: 'openchamber.openSessionInEditor', args: [' ses_abc ', 'My Session'] },
+        expectedCall: ['openchamber.openSessionInEditor', 'ses_abc', 'My Session'],
+      },
+      {
+        payload: { command: 'openchamber.openSessionInEditor', args: ['ses_abc', null] },
+        expectedCall: ['openchamber.openSessionInEditor', 'ses_abc'],
+      },
+    ];
+
+    for (const { payload, expectedCall } of validCases) {
+      executeCommand.mockClear();
+      const response = await handleSystemBridgeMessage({
+        id: `ok-${payload.command}`,
+        type: 'vscode:command',
+        payload,
+      }, undefined, deps);
+
+      expect(response).toEqual({
+        id: `ok-${payload.command}`,
+        type: 'vscode:command',
+        success: true,
+        data: { result: 'ok' },
+      });
+      expect(executeCommand).toHaveBeenCalledWith(...expectedCall);
+    }
+  });
+});
+
+describe('VS Code system bridge vscode:openExternalUrl scheme gate', () => {
+  beforeEach(() => {
+    openExternal.mockClear();
+    openExternal.mockResolvedValue(true);
+  });
+
+  test('allows https, http, mailto, and safe custom app schemes', async () => {
+    const allowedUrls = [
+      ['https://example.test/docs?a=1', 'https://example.test/docs?a=1'],
+      ['http://localhost:3901/', 'http://localhost:3901/'],
+      ['mailto:support@example.test', 'mailto:support@example.test'],
+      ['obsidian://open?vault=Notes&file=a%20b', 'obsidian://open?vault=Notes&file=a%20b'],
+      ['vscode://file/Users/dev/project/a.ts:12', 'vscode://file/Users/dev/project/a.ts:12'],
+      ['VSCODE://file/C:/Project/a.ts:1', 'vscode://file/C:/Project/a.ts:1'],
+    ];
+
+    for (const [input, expectedCanonical] of allowedUrls) {
+      openExternal.mockClear();
+      const response = await handleSystemBridgeMessage({
+        id: `open-${input}`,
+        type: 'vscode:openExternalUrl',
+        payload: { url: input },
+      }, undefined, deps);
+
+      expect(response).toEqual({
+        id: `open-${input}`,
+        type: 'vscode:openExternalUrl',
+        success: true,
+        data: { opened: true },
+      });
+      expect(openExternal).toHaveBeenCalledWith({
+        scheme: expectedCanonical.split(':')[0],
+        raw: expectedCanonical,
+        strict: true,
+      });
+    }
+  });
+
+  test('refuses dangerous, internal, non-app, and malformed URLs before opening externally', async () => {
+    const blockedUrls = [
+      'ms-msdt:id%20PCWDiagnostic',
+      'MS-MSDT:/id%20PCWDiagnostic',
+      'file:///etc/passwd',
+      'smb://127.0.0.1/share',
+      'javascript:alert(1)',
+      'ssh://user@example.test',
+      'ms-officecmd:ofe|u|https://evil.test/doc.docx',
+      'ms-word:ofe|u|https://evil.test/doc.docx',
+      'search-ms:query=report',
+      'shell:AppsFolder',
+      'openchamber://connect?host=x',
+      'openchamber-ui://app/index.html',
+      'capacitor://localhost',
+      'view-source:https://example.test',
+      'tel:+1234567890',
+      'data:text/html,<script>alert(1)</script>',
+      'vbscript:msgbox(1)',
+      'ftp://example.test/file',
+      'rdp://127.0.0.1',
+      'ldap://127.0.0.1/o=test',
+      'jnlp://example.test/app.jnlp',
+      'a://short',
+      'C:\\Windows\\System32\\calc.exe',
+      'https://example.test/a\r\nb',
+      'not a url',
+      '',
+      '   ',
+    ];
+
+    for (const url of blockedUrls) {
+      const response = await handleSystemBridgeMessage({
+        id: `block-${url}`,
+        type: 'vscode:openExternalUrl',
+        payload: { url },
+      }, undefined, deps);
+
+      expect(response.success).toBe(false);
+    }
+
+    for (const payload of [undefined, null, {}, { url: 123 }]) {
+      const response = await handleSystemBridgeMessage({
+        id: 'missing-url',
+        type: 'vscode:openExternalUrl',
+        payload,
+      }, undefined, deps);
+
+      expect(response).toEqual({
+        id: 'missing-url',
+        type: 'vscode:openExternalUrl',
+        success: false,
+        error: 'URL is required',
+      });
+    }
+    expect(openExternal).not.toHaveBeenCalled();
   });
 });

@@ -21,6 +21,13 @@ import type { BridgeContext, BridgeResponse } from './bridge';
 import { ENTERPRISE_MODE_ERROR, isEnterpriseMode, publicEnterprisePolicy } from '../../web/server/lib/enterprise-mode.js';
 import { discoverProviderModels } from './model-discovery';
 import { openCodeTrust } from './opencodeTrust';
+import {
+  ALLOWED_VSCODE_COMMANDS,
+  allowedVSCodeCommandSchema,
+  commandEnvelopeSchema,
+  externalUrlPayloadSchema,
+  parseAllowedExternalUrl,
+} from './bridge-vscode-policy';
 
 const readStoredProviderBaseURL = (providerID: string): string | undefined => {
   const provider = readConfig().provider;
@@ -662,12 +669,19 @@ export async function handleSystemBridgeMessage(
     }
 
     case 'vscode:command': {
-      const { command, args } = (payload || {}) as { command?: string; args?: unknown[] };
-      if (!command) {
+      const envelope = commandEnvelopeSchema.safeParse(payload);
+      if (!envelope.success || envelope.data.command.trim().length === 0) {
         return { id, type, success: false, error: 'Command is required' };
       }
+      if (!ALLOWED_VSCODE_COMMANDS.has(envelope.data.command)) {
+        return { id, type, success: false, error: `Command is not allowed: ${envelope.data.command}` };
+      }
+      const parsed = allowedVSCodeCommandSchema.safeParse(payload);
+      if (!parsed.success) {
+        return { id, type, success: false, error: `Invalid arguments for command: ${envelope.data.command}` };
+      }
       try {
-        const result = await vscode.commands.executeCommand(command, ...(args || []));
+        const result = await vscode.commands.executeCommand(parsed.data.command, ...parsed.data.args);
         return { id, type, success: true, data: { result } };
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
@@ -676,13 +690,16 @@ export async function handleSystemBridgeMessage(
     }
 
     case 'vscode:openExternalUrl': {
-      const { url } = (payload || {}) as { url?: string };
-      const target = typeof url === 'string' ? url.trim() : '';
-      if (!target) {
+      const parsedPayload = externalUrlPayloadSchema.safeParse(payload);
+      if (!parsedPayload.success) {
         return { id, type, success: false, error: 'URL is required' };
       }
+      const validated = parseAllowedExternalUrl(parsedPayload.data.url);
+      if (!validated.ok) {
+        return { id, type, success: false, error: validated.error };
+      }
       try {
-        await vscode.env.openExternal(vscode.Uri.parse(target));
+        await vscode.env.openExternal(vscode.Uri.parse(validated.url, true));
         return { id, type, success: true, data: { opened: true } };
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
