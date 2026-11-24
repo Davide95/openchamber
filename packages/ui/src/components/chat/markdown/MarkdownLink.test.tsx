@@ -85,3 +85,46 @@ test('fragment clicks scroll to decoded or literal IDs without browser navigatio
     }
   }
 });
+
+test('mailto links prevent default navigation, omit favicons, and route through openExternalUrl', async () => {
+  const opened: string[] = [];
+  const browserOpened: string[] = [];
+  const previousDesktop = Object.getOwnPropertyDescriptor(window, '__OPENCHAMBER_DESKTOP__');
+  const previousOpen = window.open;
+  Object.defineProperty(window, '__OPENCHAMBER_DESKTOP__', {
+    configurable: true,
+    value: { openExternal: async (url: string) => { opened.push(url); } },
+  });
+  window.open = (url?: string | URL) => {
+    browserOpened.push(String(url ?? ''));
+    return null;
+  };
+  try {
+    await act(() => root.render(<I18nProvider>
+      <MarkdownContent content="[Email support](mailto:support@example.test?subject=Help)" directory="/repo" mode="static" />
+    </I18nProvider>));
+    const link = host.querySelector('a[href="mailto:support@example.test?subject=Help"]');
+    if (!link) throw new Error('Missing rendered mailto link');
+    expect(host.querySelector('img')).toBeNull();
+    const click = new window.MouseEvent('click', { bubbles: true, cancelable: true });
+    await act(() => { link.dispatchEvent(click); });
+    expect(click.defaultPrevented).toBe(true);
+    expect(opened).toEqual(['mailto:support@example.test?subject=Help']);
+    expect(browserOpened).toEqual([]);
+  } finally {
+    if (previousDesktop) Object.defineProperty(window, '__OPENCHAMBER_DESKTOP__', previousDesktop);
+    else Reflect.deleteProperty(window, '__OPENCHAMBER_DESKTOP__');
+    window.open = previousOpen;
+  }
+});
+
+test('dangerous network and Office schemes are stripped from rendered Markdown links', async () => {
+  await act(() => root.render(<I18nProvider>
+    <MarkdownContent
+      content="[Share](smb://files.example.test/share) [Shell](ssh://user@example.test) [Doc](ms-officecmd:ofe|u|https://example.test/a.docx)"
+      directory="/repo"
+      mode="static"
+    />
+  </I18nProvider>));
+  expect(host.querySelectorAll('a[href]').length).toBe(0);
+});

@@ -131,10 +131,13 @@ PDF iframes also start with an opaque origin under the packaged UI protocol. The
 
 The preload bridge exposes desktop-only APIs to the web UI through `window.__OPENCHAMBER_DESKTOP__`. Privileged commands are checked in `main.mjs`, not only in the UI.
 
-Confirmed chat application links use the local-page-gated `desktop_open_external_url`
+Confirmed chat application links and explicit external `http:`, `https:`, and `mailto:` clicks use the local-page-gated `desktop_open_external_url`
 command and the OS protocol handler. `external-url-policy.mjs` validates schemes
-again in main, with the same exclusions as the shared UI classifier. Native
-opening failures do not fall back to a browser window for application links.
+again in main, with the same blocked-scheme exclusions as the shared UI classifier.
+Native opening failures do not fall back to a browser window for application or `mailto:` links.
+Automatic window navigation and popup fallbacks (`setWindowOpenHandler` and `will-navigate`)
+in both main and mini-chat windows (`window-navigation-guards.mjs`) open only `http:` and `https:`
+URLs externally; every other scheme is denied without calling `shell.openExternal`, and both window types share the guest-frame navigation guard.
 
 Native menu actions reach the renderer as one DOM event per click. Main must not also send them over IPC: preload turns every IPC emit into a call to its bridge listeners and a DOM event, so the action would run again. Update-check notifications go over IPC only, for the same reason.
 

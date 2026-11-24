@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 
-import { getUrlScheme, isAppLinkUrl, isLoopbackHttpUrl, extractLoopbackUrls, openConfirmedAppLinkUrl, openExternalUrl } from '@/lib/url';
+import { getUrlScheme, isAppLinkUrl, isExternalHttpUrl, isLoopbackHttpUrl, isMailtoUrl, extractLoopbackUrls, openConfirmedAppLinkUrl, openExternalUrl } from '@/lib/url';
 
 describe('confirmed desktop app links', () => {
   const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
@@ -31,9 +31,37 @@ describe('confirmed desktop app links', () => {
       open: (url: string) => { browserOpened.push(url); },
     } });
     expect(await openConfirmedAppLinkUrl('cursor://file/Project/a.ts:12')).toBe(false);
+    expect(await openExternalUrl('mailto:user@example.test')).toBe(false);
     expect(browserOpened).toEqual([]);
     expect(await openExternalUrl('https://example.test/')).toBe(true);
     expect(browserOpened).toEqual(['https://example.test/']);
+  });
+
+  test('routes mailto links through the desktop bridge or window.open without affecting http classification', async () => {
+    const opened: string[] = [];
+    const browserOpened: string[] = [];
+    Object.defineProperty(globalThis, 'window', { configurable: true, value: {
+      __OPENCHAMBER_DESKTOP__: { openExternal: async (url: string) => { opened.push(url); } },
+      open: (url: string) => { browserOpened.push(url); },
+    } });
+
+    expect(isMailtoUrl('mailto:user@example.test?subject=Hi')).toBe(true);
+    expect(isMailtoUrl('MAILTO:user@example.test')).toBe(true);
+    expect(isMailtoUrl('https://example.test')).toBe(false);
+    expect(isExternalHttpUrl('mailto:user@example.test')).toBe(false);
+    expect(isExternalHttpUrl('https://example.test')).toBe(true);
+
+    expect(await openExternalUrl('mailto:user@example.test?subject=Hi')).toBe(true);
+    expect(opened).toEqual(['mailto:user@example.test?subject=Hi']);
+    expect(browserOpened).toEqual([]);
+    expect(await openExternalUrl('smb://files.example.test/share')).toBe(false);
+    expect(await openExternalUrl('vscode://file/Project/a.ts:12')).toBe(false);
+
+    Object.defineProperty(globalThis, 'window', { configurable: true, value: {
+      open: (url: string) => { browserOpened.push(url); },
+    } });
+    expect(await openExternalUrl('mailto:user@example.test')).toBe(true);
+    expect(browserOpened).toEqual(['mailto:user@example.test']);
   });
 
   test('keeps browser app-link handling when there is no desktop bridge', async () => {
@@ -91,6 +119,39 @@ describe('isAppLinkUrl', () => {
     expect(isAppLinkUrl('ms-msdt:/id%20PCWDiagnostic')).toBe(false);
     expect(isAppLinkUrl('search-ms:query=report')).toBe(false);
     expect(isAppLinkUrl('shell:AppsFolder')).toBe(false);
+    for (const url of [
+      'smb://files.example.test/share',
+      'afp://files.example.test/share',
+      'nfs://files.example.test/export',
+      'dav://files.example.test/share',
+      'davs://files.example.test/share',
+      'ssh://user@example.test',
+      'sftp://user@example.test/file',
+      'rdp://example.test',
+      'vnc://example.test',
+      'telnet://example.test',
+      'rlogin://example.test',
+      'ldap://example.test/dc=example',
+      'ldaps://example.test/dc=example',
+      'ms-officecmd:ofe|u|https://example.test/doc.docx',
+      'ms-word:ofe|u|https://example.test/doc.docx',
+      'ms-excel:ofe|u|https://example.test/sheet.xlsx',
+      'ms-powerpoint:ofe|u|https://example.test/deck.pptx',
+      'ms-visio:ofe|u|https://example.test/chart.vsdx',
+      'ms-project:ofe|u|https://example.test/plan.mpp',
+      'ms-publisher:ofe|u|https://example.test/pub.pub',
+      'ms-access:ofe|u|https://example.test/db.accdb',
+      'ms-its:C:/Windows/Help/mui/0409/sample.chm::/topic.htm',
+      'its:C:/sample.chm::/topic.htm',
+      'mhtml:https://example.test/archive.mht',
+      'mk:@MSITStore:C:/sample.chm::/topic.htm',
+      'res://example.dll/page.html',
+      'jar:https://example.test/app.jar!/index.html',
+      'jnlp://example.test/app.jnlp',
+      'view-source:https://example.test/',
+    ]) {
+      expect(isAppLinkUrl(url)).toBe(false);
+    }
   });
 
   test('rejects OpenChamber and Capacitor self-deep-links', () => {

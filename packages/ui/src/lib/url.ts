@@ -20,6 +20,14 @@ export const isExternalHttpUrl = (url: string): boolean => {
   return parsed.protocol === 'http:' || parsed.protocol === 'https:';
 };
 
+export const isMailtoUrl = (url: string): boolean => {
+  const parsed = parseUrlSafely(url.trim());
+  if (!parsed) {
+    return false;
+  }
+  return parsed.protocol === 'mailto:';
+};
+
 export const getUrlScheme = (url: string): string | null => {
   const parsed = parseUrlSafely(url.trim());
   if (!parsed) {
@@ -37,6 +45,9 @@ const BLOCKED_APP_LINK_SCHEMES = new Set([
   'ws', 'wss', 'ftp', 'ftps',
   'intent',
   'ms-msdt', 'search-ms', 'shell',
+  'smb', 'afp', 'nfs', 'dav', 'davs', 'ssh', 'sftp', 'rdp', 'vnc', 'telnet', 'rlogin', 'ldap', 'ldaps',
+  'ms-officecmd', 'ms-word', 'ms-excel', 'ms-powerpoint', 'ms-visio', 'ms-project', 'ms-publisher', 'ms-access',
+  'ms-its', 'its', 'mhtml', 'mk', 'res', 'jar', 'jnlp', 'view-source',
   'openchamber', 'openchamber-ui', 'capacitor',
 ]);
 
@@ -137,7 +148,7 @@ const openValidatedExternalUrl = async (url: string): Promise<boolean> => {
       await desktop.openExternal(normalizedTarget);
       return true;
     } catch {
-      if (isAppLinkUrl(normalizedTarget)) return false;
+      if (!isExternalHttpUrl(normalizedTarget)) return false;
     }
   }
 
@@ -150,7 +161,7 @@ const openValidatedExternalUrl = async (url: string): Promise<boolean> => {
 };
 
 export const openExternalUrl = (url: string): Promise<boolean> =>
-  isExternalHttpUrl(url) ? openValidatedExternalUrl(url) : Promise.resolve(false);
+  isExternalHttpUrl(url) || isMailtoUrl(url) ? openValidatedExternalUrl(url) : Promise.resolve(false);
 
 export const openConfirmedAppLinkUrl = (url: string): Promise<boolean> =>
   isAppLinkUrl(url) ? openValidatedExternalUrl(url) : Promise.resolve(false);

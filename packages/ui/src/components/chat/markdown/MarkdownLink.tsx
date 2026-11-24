@@ -2,7 +2,7 @@ import React from 'react';
 import type { ExtraProps } from 'streamdown';
 import { Icon } from '@/components/icon/Icon';
 import { Button } from '@/components/ui/button';
-import { getExternalFaviconUrl, isAppLinkUrl, isExternalHttpUrl, isLoopbackHttpUrl } from '@/lib/url';
+import { getExternalFaviconUrl, isAppLinkUrl, isExternalHttpUrl, isLoopbackHttpUrl, isMailtoUrl, openExternalUrl } from '@/lib/url';
 import { parseSessionLink } from '@/lib/sessionLinks';
 import { parseExtensionInstallLink } from '@/lib/guests/install-link';
 import { requestGuestInstall } from '@/lib/guests/install-request';
@@ -199,6 +199,7 @@ function ScreenMarkdownHref({ href, children: originalChildren, node, ...props }
   const path = useConfirmedInlineFile(probe, probeHref ? 'href' : 'path');
   const textFile = Boolean(path && !probeHref);
   const external = isExternalHttpUrl(href);
+  const mailto = isMailtoUrl(href);
   const reference = node?.properties.dataOcReference !== undefined;
   const favicon = external && !path && !reference ? getExternalFaviconUrl(href) : null;
   const showPreview = presentation.loopbackPreview && isLoopbackHttpUrl(href) && directory
@@ -252,6 +253,12 @@ function ScreenMarkdownHref({ href, children: originalChildren, node, ...props }
       && runGuestLink(guestClaim, 'link', directory, t)) {
       event.preventDefault();
       event.stopPropagation();
+      return;
+    }
+    if (mailto) {
+      event.preventDefault();
+      event.stopPropagation();
+      void openExternalUrl(href);
       return;
     }
     if (external && !presentation.disableLinkSafety && !modified(event)) {
