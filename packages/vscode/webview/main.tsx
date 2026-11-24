@@ -3,7 +3,7 @@ import { createRemovalTombstones } from './inlineCommentRemovals';
 import { needsComposerDraft, resolveCommentTarget, type InlineCommentRecord } from './inlineCommentTarget';
 import { fetchLastAssistantMessageText } from './notificationMessage';
 import { findMessagePageItem } from '@openchamber/ui/lib/opencode/messagePaging';
-import { BridgeRequestError, onCommand, onThemeChange, postBridgeNotification, proxyApiRequest, proxySessionMessageRequest, sendBridgeMessage, sendBridgeMessageWithOptions, startSseProxy, stopSseProxy } from './api/bridge';
+import { BridgeRequestError, bridgeRequestErrorResponse, onCommand, onThemeChange, postBridgeNotification, proxyApiRequest, proxySessionMessageRequest, sendBridgeMessage, sendBridgeMessageWithOptions, startSseProxy, stopSseProxy } from './api/bridge';
 import { vscodeStreamPerfCount, vscodeStreamPerfMeasure, vscodeStreamPerfObserve } from './api/streamPerf';
 import { quotaGiftResetBridgePayload } from './quotaGiftResetRequest';
 import { sessionMetadataRequest } from './sessionMetadataRequest';
@@ -307,6 +307,7 @@ const bridgeJsonRoute = async (bridgeType: string, payload: unknown): Promise<Re
   try {
     return jsonResponse(await sendBridgeMessage(bridgeType, payload), 200);
   } catch (error) {
+    if (error instanceof BridgeRequestError && error.status !== undefined) return bridgeRequestErrorResponse(error);
     const message = error instanceof Error ? error.message : 'Request failed';
     return jsonResponse({ error: message }, /must be|is required|session id/.test(message) ? 400 : 500);
   }
@@ -547,11 +548,10 @@ const handleLocalApiRequest = async (input: RequestInfo | URL, url: URL, init: R
   if (normalizedPathname === '/api/small-model' && method === 'GET') {
     const directory = getRequestDirectoryHint(url, input, init);
     try {
-      const data = await sendBridgeMessage('api:small-model:get', { directory });
-      return new Response(JSON.stringify(data), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      return jsonResponse(await sendBridgeMessage('api:small-model:get', { directory }), 200);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return new Response(JSON.stringify({ error: message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+      if (error instanceof BridgeRequestError && error.status !== undefined) return bridgeRequestErrorResponse(error);
+      return jsonResponse({ error: error instanceof Error ? error.message : String(error) }, 500);
     }
   }
 

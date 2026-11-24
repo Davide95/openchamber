@@ -10,7 +10,7 @@ import { waitForWorktreeRemoval } from './gitService';
 import { handlePermissionAutoAcceptBridgeMessage } from './bridge-permission-auto-accept-runtime';
 import { handleProjectSetupBridgeMessage } from './bridge-project-setup-runtime';
 import { createSessionStateStore, getOpenChamberDataDir } from './openchamberSessionState';
-import { openCodeTrust } from './opencodeTrust';
+import { openCodeTrust, OpenCodeTrustRefusedError } from './opencodeTrust';
 import {
   fetchOpenCodeSkillsFromApi,
   persistSettings,
@@ -50,6 +50,8 @@ export interface BridgeResponse {
   data?: unknown;
   error?: string;
   code?: string;
+  status?: number;
+  directory?: string;
 }
 
 export interface BridgeContext {
@@ -85,7 +87,7 @@ export async function handleBridgeMessage(message: BridgeRequest, ctx?: BridgeCo
     }
     const smallModelResponse = await handleSmallModelBridgeMessage(
       { id, type, payload },
-      (directory) => readOpenCodeSmallModelCatalog(ctx?.manager, directory),
+      (directory) => readOpenCodeSmallModelCatalog(ctx?.manager, directory, openCodeTrust),
     );
     if (smallModelResponse) {
       return smallModelResponse;
@@ -161,6 +163,17 @@ export async function handleBridgeMessage(message: BridgeRequest, ctx?: BridgeCo
         return { id, type, success: false, error: `Unknown message type: ${type}` };
     }
   } catch (err) {
+    if (err instanceof OpenCodeTrustRefusedError) {
+      return {
+        id,
+        type,
+        success: false,
+        error: err.message,
+        status: err.status,
+        code: err.code,
+        directory: err.directory,
+      };
+    }
     const errorMessage = err instanceof Error ? err.message : String(err);
     const code = err instanceof Error && 'code' in err ? String(err.code) : undefined;
     return { id, type, success: false, error: errorMessage, code };
