@@ -307,7 +307,6 @@ const bridgeJsonRoute = async (bridgeType: string, payload: unknown): Promise<Re
   try {
     return jsonResponse(await sendBridgeMessage(bridgeType, payload), 200);
   } catch (error) {
-    if (error instanceof BridgeRequestError && error.status !== undefined) return bridgeRequestErrorResponse(error);
     const message = error instanceof Error ? error.message : 'Request failed';
     return jsonResponse({ error: message }, /must be|is required|session id/.test(message) ? 400 : 500);
   }

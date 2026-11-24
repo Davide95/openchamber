@@ -157,7 +157,7 @@ export const registerGenerateCommitMessageCommand = (
           repo.inputBox.value = formatCommitMessageForScm(generated);
         } catch (error) {
           if (error instanceof OpenCodeTrustRefusedError) {
-            vscode.window.showWarningMessage(`OpenChamber: ${error.message}`);
+            vscode.window.showWarningMessage(localize('OpenChamber: {0}', error.message));
             return;
           }
           const message = error instanceof Error ? error.message : String(error);
