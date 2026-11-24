@@ -1,6 +1,6 @@
 import type { Element, Root, ElementContent } from 'hast';
 import { z } from 'zod';
-import { isAppLinkUrl } from '@/lib/url';
+import { isAppLinkUrl, isMailtoUrl } from '@/lib/url';
 import { isSessionDeepLink } from '@/lib/sessionLinks';
 import { parseExtensionInstallLink } from '@/lib/guests/install-link';
 
@@ -22,8 +22,8 @@ function relativeOrHttp(value: string): boolean {
 
 function safeLink(value: string, vscode: boolean): boolean {
   if (value !== value.trim() || /\s/.test(value)) return false;
-  return relativeOrHttp(value) || localFile(value) || isAppLinkUrl(value)
-    || /^(?:mailto|tel|sms|callto|cid|xmpp|irc|ircs|news|nntp|feed|webcal):/i.test(value)
+  return relativeOrHttp(value) || localFile(value) || isAppLinkUrl(value) || isMailtoUrl(value)
+    || /^(?:tel|sms|callto|cid|xmpp|irc|ircs|news|nntp|feed|webcal):/i.test(value)
     || (!vscode && (isSessionDeepLink(value) || parseExtensionInstallLink(value) !== null));
 }
 

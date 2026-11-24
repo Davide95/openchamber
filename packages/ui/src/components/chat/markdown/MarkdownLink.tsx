@@ -2,7 +2,7 @@ import React from 'react';
 import type { ExtraProps } from 'streamdown';
 import { Icon } from '@/components/icon/Icon';
 import { Button } from '@/components/ui/button';
-import { getExternalFaviconUrl, isAppLinkUrl, isExternalHttpUrl, isLoopbackHttpUrl, isMailtoUrl, openExternalUrl } from '@/lib/url';
+import { getExternalFaviconUrl, isAppLinkUrl, isExternalHttpUrl, isLoopbackHttpUrl, isMailtoUrl, openMailtoUrl } from '@/lib/url';
 import { parseSessionLink } from '@/lib/sessionLinks';
 import { parseExtensionInstallLink } from '@/lib/guests/install-link';
 import { requestGuestInstall } from '@/lib/guests/install-request';
@@ -258,7 +258,7 @@ function ScreenMarkdownHref({ href, children: originalChildren, node, ...props }
     if (mailto) {
       event.preventDefault();
       event.stopPropagation();
-      void openExternalUrl(href);
+      void openMailtoUrl(href);
       return;
     }
     if (external && !presentation.disableLinkSafety && !modified(event)) {
@@ -316,8 +316,8 @@ function ScreenMarkdownHref({ href, children: originalChildren, node, ...props }
       <a
         {...props}
         href={href}
-        target="_blank"
-        rel="noopener noreferrer"
+        target={mailto ? undefined : '_blank'}
+        rel={mailto ? undefined : 'noopener noreferrer'}
         dir={text === href ? 'ltr' : props.dir}
         className={skill ? INTERACTIVE_REFERENCE_CHIP_CLASS : props.className}
         data-skill-name={skill ?? undefined}
@@ -327,6 +327,13 @@ function ScreenMarkdownHref({ href, children: originalChildren, node, ...props }
         data-openchamber-file-path={path ?? undefined}
         onClick={handleClick}
         onAuxClick={(event) => {
+          if (mailto) {
+            if (event.button === 1) {
+              event.preventDefault();
+              void openMailtoUrl(href);
+            }
+            return;
+          }
           if (!app) return;
           event.preventDefault();
           if (event.button === 1) void openAppLinkWithConfirmation(href);

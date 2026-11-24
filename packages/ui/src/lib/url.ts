@@ -4,6 +4,31 @@ type DesktopBridgeGlobal = {
   openExternal?: (url: string) => Promise<unknown>;
 };
 
+const hasControlCharacters = (value: string): boolean => {
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return true;
+  }
+  return false;
+};
+
+const hasNonWhitespaceControlCharacters = (value: string): boolean => {
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code === 0x09 || code === 0x0a || code === 0x0d) continue;
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return true;
+  }
+  return false;
+};
+
+const hasUnsafeRawCharacters = (value: string): boolean => /\s/.test(value) || value.includes('\\') || value.includes('"');
+
+const EXPLICIT_HIERARCHICAL_HTTP_RE = /^https?:\/\/[^/?#\\]/i;
+const EXPLICIT_HIERARCHICAL_CUSTOM_RE = /^[a-z][a-z0-9+.-]{1,31}:\/\/[^/?#\\]/i;
+const ENCODED_CONTROL_BYTE_RE = /%([01][0-9a-f]|7f)/i;
+const ENCODED_AUTHORITY_DELIMITER_RE = /%(?:2f|3f|23|5c|40)/i;
+const ALLOWED_MAILTO_QUERY_KEYS = new Set(['to', 'cc', 'bcc', 'subject', 'body', 'in-reply-to', 'references']);
+
 const parseUrlSafely = (value: string): URL | null => {
   try {
     return new URL(value);
@@ -13,19 +38,52 @@ const parseUrlSafely = (value: string): URL | null => {
 };
 
 export const isExternalHttpUrl = (url: string): boolean => {
-  const parsed = parseUrlSafely(url.trim());
+  if (hasControlCharacters(url)) {
+    return false;
+  }
+  const trimmed = url.trim();
+  if (!trimmed || !EXPLICIT_HIERARCHICAL_HTTP_RE.test(trimmed) || trimmed.includes('\\')) {
+    return false;
+  }
+  const parsed = parseUrlSafely(trimmed);
   if (!parsed) {
     return false;
   }
-  return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  return (parsed.protocol === 'http:' || parsed.protocol === 'https:') && parsed.hostname.length > 0;
 };
 
 export const isMailtoUrl = (url: string): boolean => {
-  const parsed = parseUrlSafely(url.trim());
-  if (!parsed) {
+  if (hasControlCharacters(url)) {
     return false;
   }
-  return parsed.protocol === 'mailto:';
+  const trimmed = url.trim();
+  if (!trimmed || /^mailto:\/\//i.test(trimmed) || hasUnsafeRawCharacters(trimmed)) {
+    return false;
+  }
+  const parsed = parseUrlSafely(trimmed);
+  if (!parsed || parsed.protocol !== 'mailto:') {
+    return false;
+  }
+  if (!parsed.pathname.trim() && parsed.searchParams.size === 0) {
+    return false;
+  }
+  if (ENCODED_CONTROL_BYTE_RE.test(parsed.pathname) || ENCODED_CONTROL_BYTE_RE.test(parsed.hash)) {
+    return false;
+  }
+  for (const [key, value] of parsed.searchParams.entries()) {
+    const normalizedKey = key.toLowerCase();
+    if (!ALLOWED_MAILTO_QUERY_KEYS.has(normalizedKey)) {
+      return false;
+    }
+    const badValue = normalizedKey === 'body'
+      ? hasNonWhitespaceControlCharacters(value)
+      : hasControlCharacters(value);
+    if (badValue) {
+      return false;
+    }
+  }
+  const serialized = parsed.toString();
+  return !hasControlCharacters(serialized) && !hasUnsafeRawCharacters(serialized);
 };
 
 export const getUrlScheme = (url: string): string | null => {
@@ -36,32 +94,63 @@ export const getUrlScheme = (url: string): string | null => {
   return parsed.protocol.replace(/:$/, '').toLowerCase();
 };
 
-const BROWSER_HANDLED_SCHEMES = new Set(['http', 'https', 'mailto', 'tel', 'sms', 'callto', 'cid', 'xmpp', 'irc', 'news', 'nntp', 'feed', 'webcal']);
+const BROWSER_HANDLED_SCHEMES = new Set([
+  'http', 'https', 'mailto', 'tel', 'sms', 'callto', 'cid', 'xmpp', 'irc', 'ircs', 'news', 'snews', 'nntp', 'feed', 'webcal',
+]);
 
 const BLOCKED_APP_LINK_SCHEMES = new Set([
   'javascript', 'data', 'vbscript', 'blob', 'filesystem', 'about',
-  'chrome', 'chrome-extension', 'devtools', 'moz-extension', 'ms-browser-extension',
+  'chrome', 'chrome-extension', 'devtools', 'moz-extension', 'ms-browser-extension', 'microsoft-edge',
   'file',
-  'ws', 'wss', 'ftp', 'ftps',
+  'ws', 'wss', 'ftp', 'ftps', 'gopher', 'tftp',
   'intent',
-  'ms-msdt', 'search-ms', 'shell',
-  'smb', 'afp', 'nfs', 'dav', 'davs', 'ssh', 'sftp', 'rdp', 'vnc', 'telnet', 'rlogin', 'ldap', 'ldaps',
-  'ms-officecmd', 'ms-word', 'ms-excel', 'ms-powerpoint', 'ms-visio', 'ms-project', 'ms-publisher', 'ms-access',
-  'ms-its', 'its', 'mhtml', 'mk', 'res', 'jar', 'jnlp', 'view-source',
-  'openchamber', 'openchamber-ui', 'capacitor',
+  'shell', 'search', 'search-ms', 'hcp', 'help', 'cmd', 'powershell',
+  'smb', 'cifs', 'afp', 'afps', 'nfs', 'dav', 'davs', 'webdav', 'webdavs',
+  'ssh', 'sftp', 'svn+ssh', 'git+ssh', 'ssh+git',
+  'rdp', 'vnc', 'telnet', 'rlogin', 'rsh', 'rexec', 'ldap', 'ldaps',
+  'its', 'mhtml', 'mk', 'res', 'jar', 'jnlp', 'view-source',
+  'applescript', 'shortcuts', 'x-man-page', 'x-apple.systempreferences', 'itms-services',
+  'openchamber', 'openchamber-ui', 'openchamber-diff', 'capacitor',
+  'command', 'vscode-remote', 'vscode-userdata', 'vscode-file', 'vscode-vfs',
+  'vscode-webview', 'vscode-resource', 'vscode-notebook-cell', 'vscode-notebook-output',
+  'vscode-terminal', 'vscode-settings', 'vscode-local-history',
+  'untitled', 'walkthrough', 'output', 'debug', 'git',
 ]);
 
 const APP_LINK_SCHEME_RE = /^[a-z][a-z0-9+.-]{1,31}$/;
 
 export const isAppLinkUrl = (url: string): boolean => {
-  const scheme = getUrlScheme(url);
-  if (!scheme) {
+  if (hasControlCharacters(url)) {
     return false;
   }
-  if (BROWSER_HANDLED_SCHEMES.has(scheme) || BLOCKED_APP_LINK_SCHEMES.has(scheme)) {
+  const trimmed = url.trim();
+  if (
+    !trimmed
+    || !EXPLICIT_HIERARCHICAL_CUSTOM_RE.test(trimmed)
+    || hasUnsafeRawCharacters(trimmed)
+    || ENCODED_CONTROL_BYTE_RE.test(trimmed)
+  ) {
     return false;
   }
-  return APP_LINK_SCHEME_RE.test(scheme);
+  const parsed = parseUrlSafely(trimmed);
+  if (!parsed || !parsed.hostname || parsed.username || parsed.password) {
+    return false;
+  }
+  const scheme = parsed.protocol.replace(/:$/, '').toLowerCase();
+  if (
+    !APP_LINK_SCHEME_RE.test(scheme)
+    || scheme.startsWith('ms-')
+    || BROWSER_HANDLED_SCHEMES.has(scheme)
+    || BLOCKED_APP_LINK_SCHEMES.has(scheme)
+  ) {
+    return false;
+  }
+  const authority = trimmed.slice(scheme.length + 3).split(/[/?#]/, 1)[0];
+  if (!authority || ENCODED_AUTHORITY_DELIMITER_RE.test(authority)) {
+    return false;
+  }
+  const serialized = parsed.toString();
+  return !hasControlCharacters(serialized) && !hasUnsafeRawCharacters(serialized);
 };
 
 export const getExternalFaviconUrl = (url: string): string | null => {
@@ -115,7 +204,25 @@ export const extractLoopbackUrls = (text: string): string[] => {
   return out;
 };
 
-const openValidatedExternalUrl = async (url: string): Promise<boolean> => {
+const openMailtoInBrowser = (normalizedTarget: string): boolean => {
+  try {
+    if (globalThis.document?.createElement) {
+      const anchor = globalThis.document.createElement('a');
+      anchor.href = normalizedTarget;
+      anchor.click();
+      return true;
+    }
+    if (window.location?.assign) {
+      window.location.assign(normalizedTarget);
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+};
+
+const openValidatedExternalUrl = async (url: string, kind: 'http' | 'mailto' | 'app'): Promise<boolean> => {
   if (typeof window === 'undefined') {
     return false;
   }
@@ -148,8 +255,12 @@ const openValidatedExternalUrl = async (url: string): Promise<boolean> => {
       await desktop.openExternal(normalizedTarget);
       return true;
     } catch {
-      if (!isExternalHttpUrl(normalizedTarget)) return false;
+      if (kind !== 'http') return false;
     }
+  }
+
+  if (kind === 'mailto') {
+    return openMailtoInBrowser(normalizedTarget);
   }
 
   try {
@@ -161,7 +272,10 @@ const openValidatedExternalUrl = async (url: string): Promise<boolean> => {
 };
 
 export const openExternalUrl = (url: string): Promise<boolean> =>
-  isExternalHttpUrl(url) || isMailtoUrl(url) ? openValidatedExternalUrl(url) : Promise.resolve(false);
+  isExternalHttpUrl(url) ? openValidatedExternalUrl(url, 'http') : Promise.resolve(false);
+
+export const openMailtoUrl = (url: string): Promise<boolean> =>
+  isMailtoUrl(url) ? openValidatedExternalUrl(url, 'mailto') : Promise.resolve(false);
 
 export const openConfirmedAppLinkUrl = (url: string): Promise<boolean> =>
-  isAppLinkUrl(url) ? openValidatedExternalUrl(url) : Promise.resolve(false);
+  isAppLinkUrl(url) ? openValidatedExternalUrl(url, 'app') : Promise.resolve(false);

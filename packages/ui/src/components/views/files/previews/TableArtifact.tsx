@@ -22,7 +22,7 @@ import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { loadColumnWidths, saveColumnWidths, type ColumnWidths } from '@/lib/columnWidthMemory';
 import { isRightToLeft, useI18n } from '@/lib/i18n';
-import { openExternalUrl } from '@/lib/url';
+import { isMailtoUrl, openExternalUrl, openMailtoUrl } from '@/lib/url';
 import { cn } from '@/lib/utils';
 import { ArtifactMetaBar } from './ArtifactMetaBar';
 import { formatArtifactSize } from './artifactMeta';
@@ -109,7 +109,7 @@ const CellText: React.FC<{ text: string; href?: string }> = ({ text, href }) => 
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
-        if (part.href) void openExternalUrl(part.href);
+        if (part.href) void (isMailtoUrl(part.href) ? openMailtoUrl(part.href) : openExternalUrl(part.href));
       }}
     >
       {part.text}

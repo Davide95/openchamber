@@ -1,7 +1,7 @@
 import React from 'react';
 import { SimpleMarkdownRenderer } from '@/components/chat/MarkdownRenderer';
 import { useI18n } from '@/lib/i18n';
-import { openExternalUrl } from '@/lib/url';
+import { isMailtoUrl, openExternalUrl, openMailtoUrl } from '@/lib/url';
 import { linkReleaseNoteMentions, type ReleaseNotesContent, type ReleaseNotesGroupKey } from './releaseNotes';
 
 const GROUP_PREVIEW = 3;
@@ -23,7 +23,7 @@ const openLinksExternally = (event: React.MouseEvent) => {
   if (!link?.href) return;
   event.preventDefault();
   event.stopPropagation();
-  void openExternalUrl(link.href);
+  void (isMailtoUrl(link.href) ? openMailtoUrl(link.href) : openExternalUrl(link.href));
 };
 
 const Markdown: React.FC<{ content: string }> = ({ content }) => (

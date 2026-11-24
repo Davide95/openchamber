@@ -86,7 +86,7 @@ test('fragment clicks scroll to decoded or literal IDs without browser navigatio
   }
 });
 
-test('mailto links prevent default navigation, omit favicons, and route through openExternalUrl', async () => {
+test('mailto links prevent default navigation, omit target and favicons, and route clicks and middle-clicks through openMailtoUrl', async () => {
   const opened: string[] = [];
   const browserOpened: string[] = [];
   const previousDesktop = Object.getOwnPropertyDescriptor(window, '__OPENCHAMBER_DESKTOP__');
@@ -105,11 +105,19 @@ test('mailto links prevent default navigation, omit favicons, and route through 
     </I18nProvider>));
     const link = host.querySelector('a[href="mailto:support@example.test?subject=Help"]');
     if (!link) throw new Error('Missing rendered mailto link');
+    expect(link.getAttribute('target')).toBeNull();
+    expect(link.getAttribute('rel')).toBeNull();
     expect(host.querySelector('img')).toBeNull();
     const click = new window.MouseEvent('click', { bubbles: true, cancelable: true });
     await act(() => { link.dispatchEvent(click); });
     expect(click.defaultPrevented).toBe(true);
-    expect(opened).toEqual(['mailto:support@example.test?subject=Help']);
+    const auxClick = new window.MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 });
+    await act(() => { link.dispatchEvent(auxClick); });
+    expect(auxClick.defaultPrevented).toBe(true);
+    expect(opened).toEqual([
+      'mailto:support@example.test?subject=Help',
+      'mailto:support@example.test?subject=Help',
+    ]);
     expect(browserOpened).toEqual([]);
   } finally {
     if (previousDesktop) Object.defineProperty(window, '__OPENCHAMBER_DESKTOP__', previousDesktop);
@@ -118,10 +126,10 @@ test('mailto links prevent default navigation, omit favicons, and route through 
   }
 });
 
-test('dangerous network and Office schemes are stripped from rendered Markdown links', async () => {
+test('dangerous network, Office, opaque, and attachment-bearing mailto links are stripped from rendered Markdown links', async () => {
   await act(() => root.render(<I18nProvider>
     <MarkdownContent
-      content="[Share](smb://files.example.test/share) [Shell](ssh://user@example.test) [Doc](ms-officecmd:ofe|u|https://example.test/a.docx)"
+      content="[Share](smb://files.example.test/share) [Shell](ssh://user@example.test) [Doc](ms-officecmd:ofe|u|https://example.test/a.docx) [Search](search:query=secret) [Leak](mailto:evil@example.test?attach=/etc/passwd) [Opaque](ab:\\Windows\\System32\\calc.exe)"
       directory="/repo"
       mode="static"
     />

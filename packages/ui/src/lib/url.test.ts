@@ -1,12 +1,15 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 
-import { getUrlScheme, isAppLinkUrl, isExternalHttpUrl, isLoopbackHttpUrl, isMailtoUrl, extractLoopbackUrls, openConfirmedAppLinkUrl, openExternalUrl } from '@/lib/url';
+import { getUrlScheme, isAppLinkUrl, isExternalHttpUrl, isLoopbackHttpUrl, isMailtoUrl, extractLoopbackUrls, openConfirmedAppLinkUrl, openExternalUrl, openMailtoUrl } from '@/lib/url';
 
 describe('confirmed desktop app links', () => {
   const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  const previousDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
   afterEach(() => {
     if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow);
     else Reflect.deleteProperty(globalThis, 'window');
+    if (previousDocument) Object.defineProperty(globalThis, 'document', previousDocument);
+    else Reflect.deleteProperty(globalThis, 'document');
   });
 
   test('passes the complete editor URL to the native bridge', async () => {
@@ -24,34 +27,63 @@ describe('confirmed desktop app links', () => {
     expect(opened).toEqual([url]);
   });
 
-  test('does not open a browser window when the native app handler fails', async () => {
+  test('does not open a browser window when the native app or mailto handler fails', async () => {
     const browserOpened: string[] = [];
+    const clickedHrefs: string[] = [];
+    Object.defineProperty(globalThis, 'document', { configurable: true, value: {
+      createElement: () => {
+        const anchor = { href: '', click() { clickedHrefs.push(anchor.href); } };
+        return anchor;
+      },
+    } });
     Object.defineProperty(globalThis, 'window', { configurable: true, value: {
       __OPENCHAMBER_DESKTOP__: { openExternal: async () => { throw new Error('No protocol handler'); } },
       open: (url: string) => { browserOpened.push(url); },
     } });
     expect(await openConfirmedAppLinkUrl('cursor://file/Project/a.ts:12')).toBe(false);
-    expect(await openExternalUrl('mailto:user@example.test')).toBe(false);
+    expect(await openMailtoUrl('mailto:user@example.test')).toBe(false);
     expect(browserOpened).toEqual([]);
+    expect(clickedHrefs).toEqual([]);
     expect(await openExternalUrl('https://example.test/')).toBe(true);
     expect(browserOpened).toEqual(['https://example.test/']);
   });
 
-  test('routes mailto links through the desktop bridge or window.open without affecting http classification', async () => {
+  test('keeps openExternalUrl HTTP(S)-only and routes sanitized mailto via openMailtoUrl without window.open', async () => {
     const opened: string[] = [];
     const browserOpened: string[] = [];
+    const clickedAnchors: Array<{ href: string; target: string }> = [];
+    Object.defineProperty(globalThis, 'document', { configurable: true, value: {
+      createElement: () => {
+        const anchor = {
+          href: '',
+          target: '',
+          click() { clickedAnchors.push({ href: anchor.href, target: anchor.target }); },
+        };
+        return anchor;
+      },
+    } });
     Object.defineProperty(globalThis, 'window', { configurable: true, value: {
       __OPENCHAMBER_DESKTOP__: { openExternal: async (url: string) => { opened.push(url); } },
       open: (url: string) => { browserOpened.push(url); },
     } });
 
     expect(isMailtoUrl('mailto:user@example.test?subject=Hi')).toBe(true);
+    expect(isMailtoUrl('mailto:user@example.test?subject=Hi&body=Line%201%0ALine%202')).toBe(true);
     expect(isMailtoUrl('MAILTO:user@example.test')).toBe(true);
     expect(isMailtoUrl('https://example.test')).toBe(false);
+    expect(isMailtoUrl('mailto:user@example.test?attach=/etc/passwd')).toBe(false);
+    expect(isMailtoUrl('mailto:user@example.test?Attachment=C:/secret.txt')).toBe(false);
+    expect(isMailtoUrl('mailto:user@example.test?%61ttach=/etc/passwd')).toBe(false);
+    expect(isMailtoUrl('mailto:user@example.test?subject=Hi%0d%0aBcc:evil@example.test')).toBe(false);
+    expect(isMailtoUrl('mailto:user@example.test" --arg=evil')).toBe(false);
     expect(isExternalHttpUrl('mailto:user@example.test')).toBe(false);
     expect(isExternalHttpUrl('https://example.test')).toBe(true);
+    expect(isExternalHttpUrl('http:example.test')).toBe(false);
+    expect(isExternalHttpUrl('https:\\\\example.test')).toBe(false);
 
-    expect(await openExternalUrl('mailto:user@example.test?subject=Hi')).toBe(true);
+    expect(await openExternalUrl('mailto:user@example.test?subject=Hi')).toBe(false);
+    expect(await openMailtoUrl('mailto:user@example.test?attach=/etc/passwd')).toBe(false);
+    expect(await openMailtoUrl('mailto:user@example.test?subject=Hi')).toBe(true);
     expect(opened).toEqual(['mailto:user@example.test?subject=Hi']);
     expect(browserOpened).toEqual([]);
     expect(await openExternalUrl('smb://files.example.test/share')).toBe(false);
@@ -60,8 +92,9 @@ describe('confirmed desktop app links', () => {
     Object.defineProperty(globalThis, 'window', { configurable: true, value: {
       open: (url: string) => { browserOpened.push(url); },
     } });
-    expect(await openExternalUrl('mailto:user@example.test')).toBe(true);
-    expect(browserOpened).toEqual(['mailto:user@example.test']);
+    expect(await openMailtoUrl('mailto:user@example.test')).toBe(true);
+    expect(browserOpened).toEqual([]);
+    expect(clickedAnchors).toEqual([{ href: 'mailto:user@example.test', target: '' }]);
   });
 
   test('keeps browser app-link handling when there is no desktop bridge', async () => {
@@ -101,10 +134,12 @@ describe('isAppLinkUrl', () => {
     expect(isAppLinkUrl('mailto:user@example.test')).toBe(false);
     expect(isAppLinkUrl('tel:+1234567890')).toBe(false);
     expect(isAppLinkUrl('sms:+1234567890')).toBe(false);
+    expect(isAppLinkUrl('ircs://irc.example.test/chan')).toBe(false);
+    expect(isAppLinkUrl('snews://news.example.test')).toBe(false);
     expect(isAppLinkUrl('webcal://example.test/cal.ics')).toBe(false);
   });
 
-  test('rejects dangerous and internal schemes', () => {
+  test('rejects dangerous, internal, and malformed schemes', () => {
     expect(isAppLinkUrl('javascript:alert(1)')).toBe(false);
     expect(isAppLinkUrl('data:text/html;base64,PHNjcmlwdD4=')).toBe(false);
     expect(isAppLinkUrl('vbscript:msgbox(1)')).toBe(false);
@@ -120,17 +155,40 @@ describe('isAppLinkUrl', () => {
     expect(isAppLinkUrl('search-ms:query=report')).toBe(false);
     expect(isAppLinkUrl('shell:AppsFolder')).toBe(false);
     for (const url of [
+      'search:query=x&crumb=location:\\\\example.test\\share',
+      'ms-appinstaller:?source=https://example.test/x.appx',
+      'ms-cxh://x',
+      'ms-cxh-full://x',
+      'ms-settings:windowsdefender',
+      'ms-quick-assist:',
+      'ms-future-handler://x',
+      'hcp://services/subsite',
+      'help:topic',
+      'cmd://run',
+      'powershell://run',
+      'microsoft-edge:https://example.test',
       'smb://files.example.test/share',
+      'cifs://files.example.test/share',
       'afp://files.example.test/share',
+      'afps://files.example.test/share',
       'nfs://files.example.test/export',
       'dav://files.example.test/share',
       'davs://files.example.test/share',
+      'webdav://files.example.test/share',
+      'webdavs://files.example.test/share',
       'ssh://user@example.test',
       'sftp://user@example.test/file',
+      'svn+ssh://example.test/repo',
+      'git+ssh://example.test/repo',
+      'ssh+git://example.test/repo',
       'rdp://example.test',
       'vnc://example.test',
       'telnet://example.test',
       'rlogin://example.test',
+      'rsh://example.test',
+      'rexec://example.test',
+      'gopher://example.test/',
+      'tftp://example.test/x',
       'ldap://example.test/dc=example',
       'ldaps://example.test/dc=example',
       'ms-officecmd:ofe|u|https://example.test/doc.docx',
@@ -149,6 +207,26 @@ describe('isAppLinkUrl', () => {
       'jar:https://example.test/app.jar!/index.html',
       'jnlp://example.test/app.jnlp',
       'view-source:https://example.test/',
+      'applescript://com.apple.scripteditor?action=new',
+      'shortcuts://run-shortcut?name=Demo',
+      'x-man-page://ls',
+      'x-apple.systempreferences:com.apple.preference.security',
+      'itms-services://?action=download-manifest&url=https://example.test/a.plist',
+      'command:workbench.action.terminal.new',
+      'vscode-remote://ssh-remote+x/tmp',
+      'vscode-file://vscode-app/etc/passwd',
+      'vscode-webview://id/index.html',
+      'vscode-resource://file/etc/passwd',
+      'vscode-userdata:/User/settings.json',
+      'openchamber-diff:/file?key=1',
+      'ab:\\Windows\\System32\\calc.exe',
+      'ab:\\\\attacker.test\\share\\payload.exe',
+      'vscode:foo" --evil-flag',
+      'obsidian://open?vault=x&file=a\\b',
+      'custom://good.test%2f@evil.test/x',
+      'custom:////evil.test/share',
+      'obsidian://open?vault=x\r\ny',
+      'obsidian://open?vault=x\u0000y',
     ]) {
       expect(isAppLinkUrl(url)).toBe(false);
     }

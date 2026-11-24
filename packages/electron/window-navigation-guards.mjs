@@ -1,4 +1,4 @@
-import { isAutoOpenableExternalUrl } from './external-url-policy.mjs';
+import { parseAutoOpenableExternalUrl } from './external-url-policy.mjs';
 import { shouldBlockGuestFrameNavigation } from './guest-frame-navigation.mjs';
 
 export const attachWindowNavigationGuards = ({
@@ -53,8 +53,9 @@ export const attachWindowNavigationGuards = ({
       if (route) onOpenSession(route);
       return { action: 'deny' };
     }
-    if (isAutoOpenableExternalUrl(url)) {
-      void openExternal(url).catch(() => {});
+    const external = parseAutoOpenableExternalUrl(url);
+    if (external) {
+      void openExternal(external.toString()).catch(() => {});
     }
     return { action: 'deny' };
   });
@@ -67,8 +68,9 @@ export const attachWindowNavigationGuards = ({
       openConfiguredHost(host, url);
       return;
     }
-    if (isAutoOpenableExternalUrl(url)) {
-      void openExternal(url).catch(() => {});
+    const external = parseAutoOpenableExternalUrl(url);
+    if (external) {
+      void openExternal(external.toString()).catch(() => {});
     }
   });
 

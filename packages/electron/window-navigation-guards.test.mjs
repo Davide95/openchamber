@@ -103,8 +103,9 @@ for (const [label, allowConfiguredHostNavigation] of [['main window', true], ['m
     }
     assert.deepEqual(harness.externalOpened, []);
 
-    assert.deepEqual(harness.triggerWindowOpen('https://docs.example.test/guide'), { action: 'deny' });
+    assert.deepEqual(harness.triggerWindowOpen(' HTTPS://DOCS.EXAMPLE.TEST/guide '), { action: 'deny' });
     assert.equal(harness.triggerWillNavigate('http://external.example.test/page'), true);
+    assert.equal(harness.triggerWillNavigate('https://external.example.test/bad\r\n'), true);
     assert.deepEqual(harness.externalOpened, [
       'https://docs.example.test/guide',
       'http://external.example.test/page',

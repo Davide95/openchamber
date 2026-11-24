@@ -9,7 +9,7 @@ import { ContentLoadingState, ContentState } from '@/components/ui/content-state
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useI18n } from '@/lib/i18n';
-import { openExternalUrl } from '@/lib/url';
+import { isMailtoUrl, openExternalUrl, openMailtoUrl } from '@/lib/url';
 import { toast } from '@/components/ui';
 import { ArtifactMetaBar } from './ArtifactMetaBar';
 import { BinaryArtifact } from './BinaryArtifact';
@@ -327,7 +327,7 @@ export const OfficeArtifact: React.FC<{
       const message = officeFrameMessage.safeParse(event.data);
       if (!message.success) return;
       if (message.data.type === OFFICE_LINK_MESSAGE) {
-        if (isOpenableLink(message.data.url)) void openExternalUrl(message.data.url);
+        if (isOpenableLink(message.data.url)) void (isMailtoUrl(message.data.url) ? openMailtoUrl(message.data.url) : openExternalUrl(message.data.url));
         return;
       }
       const { text, place, x, y } = message.data;
