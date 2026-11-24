@@ -413,6 +413,13 @@ describe('Settings editor panel', () => {
     await chat.receive({ id: 'blank-title', type: 'vscode:command', payload: { command: 'openchamber.updateSessionEditorTitle', args: ['ses_1', '   '] } });
     expect(chat.title).toBe('Session');
 
+    await chat.receive({ id: 'long-title', type: 'vscode:command', payload: { command: 'openchamber.updateSessionEditorTitle', args: ['ses_1', 'y'.repeat(5000)] } });
+    expect(chat.title).toBe('y'.repeat(4096));
+
+    chat.dispose();
+    await chat.receive({ id: 'disposed-title', type: 'vscode:command', payload: { command: 'openchamber.updateSessionEditorTitle', args: ['ses_1', 'After Dispose'] } });
+    expect(chat.title).toBe('y'.repeat(4096));
+
     expect(executeCommand).not.toHaveBeenCalled();
   });
 });

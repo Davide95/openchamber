@@ -307,17 +307,10 @@ export class SessionEditorPanelProvider {
         return;
       }
 
-      if (message.type === 'vscode:command') {
+      if (state.kind === 'session' && message.type === 'vscode:command') {
         const envelope = commandEnvelopeSchema.safeParse(message.payload);
-        if (envelope.success && envelope.data.command === 'openchamber.settingsReady') {
-          this._postResponse(state, { id: message.id, type: message.type, success: false, error: 'Command is not allowed: openchamber.settingsReady' });
-          return;
-        }
         if (envelope.success && envelope.data.command === 'openchamber.updateSessionEditorTitle') {
-          if (state.kind !== 'session') {
-            this._postResponse(state, { id: message.id, type: message.type, success: false, error: 'Command is not allowed: openchamber.updateSessionEditorTitle' });
-            return;
-          }
+          if (this._panels.get(state.id) !== state) return;
           const parsed = updateSessionEditorTitleCommandSchema.safeParse(message.payload);
           if (!parsed.success) {
             this._postResponse(state, { id: message.id, type: message.type, success: false, error: 'Invalid arguments for command: openchamber.updateSessionEditorTitle' });

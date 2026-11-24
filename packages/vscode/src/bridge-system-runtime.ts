@@ -699,7 +699,11 @@ export async function handleSystemBridgeMessage(
         return { id, type, success: false, error: validated.error };
       }
       try {
-        await vscode.env.openExternal(vscode.Uri.parse(validated.url, true));
+        const uri = vscode.Uri.parse(validated.url, true);
+        if (uri.scheme.toLowerCase() !== validated.scheme) {
+          return { id, type, success: false, error: 'URL scheme cannot be opened externally' };
+        }
+        await vscode.env.openExternal(uri);
         return { id, type, success: true, data: { opened: true } };
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);

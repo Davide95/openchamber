@@ -37,7 +37,25 @@ mock.module('vscode', () => ({
   },
   Uri: {
     file: (fsPath) => ({ scheme: 'file', fsPath }),
-    parse: (value, strict) => ({ scheme: value.split(':')[0], raw: value, strict }),
+    parse: (value, strict) => {
+      const match = /^(([^:/?#]+?):)?(\/\/([^/?#]*))?([^?#]*)(\?([^#]*))?(#(.*))?/.exec(value);
+      const scheme = match?.[2] ?? '';
+      const authority = match?.[4] ?? '';
+      const path = match?.[5] ?? '';
+      if (strict && !scheme) {
+        throw new Error(`Scheme is missing: ${value}`);
+      }
+      if (strict && !authority && path.startsWith('//')) {
+        throw new Error(`Path cannot begin with // without authority: ${value}`);
+      }
+      return {
+        scheme,
+        authority: decodeURIComponent(authority),
+        path: decodeURIComponent(path),
+        raw: value,
+        strict,
+      };
+    },
   },
   Position,
   Range,
@@ -512,6 +530,10 @@ describe('VS Code system bridge vscode:command allowlist', () => {
         expectedCall: ['openchamber.setActiveSession', 'ses_abc', 'Session Title'],
       },
       {
+        payload: { command: 'openchamber.setActiveSession', args: ['ses_abc', 'x'.repeat(5000)] },
+        expectedCall: ['openchamber.setActiveSession', 'ses_abc', 'x'.repeat(4096)],
+      },
+      {
         payload: { command: 'openchamber.setActiveSession', args: ['ses_abc'] },
         expectedCall: ['openchamber.setActiveSession', 'ses_abc'],
       },
@@ -558,11 +580,13 @@ describe('VS Code system bridge vscode:openExternalUrl scheme gate', () => {
     openExternal.mockResolvedValue(true);
   });
 
-  test('allows https, http, mailto, and safe custom app schemes', async () => {
+  test('allows https, http, safe mailto, and hierarchical safe custom app schemes', async () => {
     const allowedUrls = [
       ['https://example.test/docs?a=1', 'https://example.test/docs?a=1'],
+      ['https://github.com/org/repo/issues/new?body=Line%201%0ALine%202', 'https://github.com/org/repo/issues/new?body=Line%201%0ALine%202'],
       ['http://localhost:3901/', 'http://localhost:3901/'],
       ['mailto:support@example.test', 'mailto:support@example.test'],
+      ['mailto:support@example.test?subject=Hi&body=Line%201%0ALine%202', 'mailto:support@example.test?subject=Hi&body=Line%201%0ALine%202'],
       ['obsidian://open?vault=Notes&file=a%20b', 'obsidian://open?vault=Notes&file=a%20b'],
       ['vscode://file/Users/dev/project/a.ts:12', 'vscode://file/Users/dev/project/a.ts:12'],
       ['VSCODE://file/C:/Project/a.ts:1', 'vscode://file/C:/Project/a.ts:1'],
@@ -582,11 +606,11 @@ describe('VS Code system bridge vscode:openExternalUrl scheme gate', () => {
         success: true,
         data: { opened: true },
       });
-      expect(openExternal).toHaveBeenCalledWith({
+      expect(openExternal).toHaveBeenCalledWith(expect.objectContaining({
         scheme: expectedCanonical.split(':')[0],
         raw: expectedCanonical,
         strict: true,
-      });
+      }));
     }
   });
 
@@ -594,19 +618,59 @@ describe('VS Code system bridge vscode:openExternalUrl scheme gate', () => {
     const blockedUrls = [
       'ms-msdt:id%20PCWDiagnostic',
       'MS-MSDT:/id%20PCWDiagnostic',
+      'ms-appinstaller:?source=https://evil.test/a.appx',
+      'ms-settings:windowsdefender',
+      'ms-cxh://x',
+      'ms-cxh-full://x',
+      'ms-future-handler://x',
       'file:///etc/passwd',
       'smb://127.0.0.1/share',
+      'cifs://127.0.0.1/share',
+      'webdav://127.0.0.1/share',
+      'webdavs://127.0.0.1/share',
+      'afps://127.0.0.1/share',
       'javascript:alert(1)',
       'ssh://user@example.test',
+      'svn+ssh://example.test/repo',
+      'git+ssh://example.test/repo',
+      'ssh+git://example.test/repo',
       'ms-officecmd:ofe|u|https://evil.test/doc.docx',
       'ms-word:ofe|u|https://evil.test/doc.docx',
       'search-ms:query=report',
+      'search:query=report&crumb=location:\\\\evil.test\\share',
       'shell:AppsFolder',
+      'hcp://services/subsite',
+      'help:topic',
+      'cmd://run',
+      'powershell://run',
+      'microsoft-edge:https://evil.test',
+      'applescript://com.apple.scripteditor?action=new',
+      'shortcuts://run-shortcut?name=Evil',
+      'x-man-page://ls',
+      'x-apple.systempreferences:com.apple.preference.security',
+      'itms-services://?action=download-manifest&url=https://evil.test/a.plist',
       'openchamber://connect?host=x',
       'openchamber-ui://app/index.html',
+      'openchamber-diff:/file?key=1',
       'capacitor://localhost',
+      'command:workbench.action.terminal.new',
+      'vscode-remote://ssh-remote+evil/tmp',
+      'vscode-userdata:/User/settings.json',
+      'vscode-file://vscode-app/etc/passwd',
+      'vscode-vfs://github/a/b',
+      'vscode-webview://id/index.html',
+      'vscode-resource://file/etc/passwd',
+      'vscode-notebook-cell:/a',
+      'vscode-terminal:/a',
+      'untitled:/foo',
       'view-source:https://example.test',
       'tel:+1234567890',
+      'ircs://irc.example.test/chan',
+      'snews://news.example.test',
+      'gopher://example.test/',
+      'tftp://example.test/x',
+      'rsh://example.test',
+      'rexec://example.test',
       'data:text/html,<script>alert(1)</script>',
       'vbscript:msgbox(1)',
       'ftp://example.test/file',
@@ -615,7 +679,27 @@ describe('VS Code system bridge vscode:openExternalUrl scheme gate', () => {
       'jnlp://example.test/app.jnlp',
       'a://short',
       'C:\\Windows\\System32\\calc.exe',
+      'ab:\\Windows\\System32\\calc.exe',
+      'custom:foo bar "baz" \\qux',
+      'obsidian://open?file=\\\\evil\\share\\doc',
+      'custom://good.test%2f@evil.test/x',
+      'custom:////evil.test/share',
+      'custom:///%2f/evil.test/share',
+      'https://example.test/a%00b%0d%0ac',
+      'https://example.test/a?q=ok%00bad',
       'https://example.test/a\r\nb',
+      '\thttps://example.test/',
+      'https://example.test/a\u0085b',
+      'http:example.test',
+      'https:\\\\evil.test',
+      'http:///etc/passwd',
+      'mailto:',
+      'mailto://user@example.test',
+      'mailto:user@example.test?attach=/etc/passwd',
+      'mailto:user@example.test?Attachment=C:/secret.txt',
+      'mailto:user@example.test?%61ttach=/etc/passwd',
+      'mailto:user@example.test?subject=Hi%0d%0aBcc:evil@example.test',
+      'mailto:victim@example.test" --arg=evil',
       'not a url',
       '',
       '   ',
