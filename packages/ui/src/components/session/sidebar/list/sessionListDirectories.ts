@@ -1,0 +1,31 @@
+import type { WorktreeMetadata } from '@/types/worktree';
+import { listIntegrateCheckouts } from '@/lib/worktrees/integrateCheckouts';
+import { normalizePath } from '../utils';
+
+export const buildKnownSessionDirectories = (
+  projects: Array<{ path: string }>,
+  availableWorktreesByProject: Map<string, WorktreeMetadata[]>,
+  options?: { includeWorktrees?: boolean },
+): Set<string> => {
+  const directories = new Set<string>();
+  for (const project of projects) {
+    const normalized = normalizePath(project.path);
+    if (normalized) directories.add(normalized);
+  }
+  if (options?.includeWorktrees === false) {
+    return directories;
+  }
+  const projectDirectories = new Set(directories);
+  for (const [projectPath, worktrees] of availableWorktreesByProject) {
+    const owner = normalizePath(projectPath);
+    if (!owner || !projectDirectories.has(owner)) continue;
+    for (const worktree of worktrees) {
+      const normalized = normalizePath(worktree.path);
+      if (normalized) directories.add(normalized);
+    }
+  }
+  for (const checkout of listIntegrateCheckouts()) {
+    if (checkout.projectPaths.some((path) => projectDirectories.has(path))) directories.add(checkout.path);
+  }
+  return directories;
+};
